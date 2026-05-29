@@ -1,0 +1,25 @@
+# Core
+pandas>=2.2
+numpy>=1.26
+requests>=2.31
+pyyaml>=6.0
+python-dotenv>=1.0
+scipy>=1.12
+# Modeling
+scikit-learn>=1.4
+lightgbm>=4.3
+optuna>=3.6
+shap>=0.45
+# Calendars
+holidays>=0.50
+# Plotting
+matplotlib>=3.8
+# LLM (free-tier; using Gemini by default)
+google-generativeai>=0.7
+# groq>=0.9   # uncomment if you use Groq instead
+# Schema validation
+pydantic>=2.6
+# Dev
+pytest>=8.0
+ruff>=0.4
+black>=24.0

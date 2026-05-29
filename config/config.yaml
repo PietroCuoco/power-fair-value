@@ -1,0 +1,36 @@
+project:
+  name: power-fair-value
+  market: DE                 # German/Luxembourg bidding zone
+  timezone: Europe/Berlin
+  random_seed: 42
+
+data:
+  source_primary: smard
+  source_secondary: entsoe   # cross-check QA if token available
+  start_date: "2023-01-01"
+  end_date: "auto"           # auto = latest available
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+qa:
+  spike_zscore_threshold: 6.0
+  max_gap_hours_interpolate: 3
+  negative_price_is_valid: true
+
+model:
+  target: da_price_hourly
+  quantiles: [0.05, 0.5, 0.95]
+  walk_forward:
+    initial_train_days: 540
+    step_days: 30
+    horizon_days: 1
+
+trading:
+  peak_hours: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]  # EU peak 08-20 CET
+  front_week_business_days: 5
+
+llm:
+  provider: gemini           # gemini | groq
+  model: gemini-1.5-flash    # verify current free model name when wiring
+  temperature: 0.0
+  log_dir: logs/llm
