@@ -68,6 +68,10 @@ SERIES_REGISTRY: dict[str, Series] = {
     "fc_gen_wind_onshore": Series(123, "DE", "forecast"),
     "fc_gen_wind_offshore": Series(3791, "DE", "forecast"),
     "fc_gen_pv": Series(125, "DE", "forecast"),
+    # Day-ahead forecasted consumption (confirmed live via discover). Expected
+    # mapping 411 = total load, 413 = residual load; verify by magnitude.
+    "fc_load_total": Series(411, "DE", "forecast"),
+    "fc_residual_load": Series(413, "DE", "forecast"),  # prime point-in-time driver
 }
 
 # Candidate filter ids to probe for a day-ahead *load* forecast. We do not know

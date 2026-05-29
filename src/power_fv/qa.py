@@ -45,11 +45,18 @@ def check_index(df: pd.DataFrame) -> dict[str, Any]:
 
 
 def check_dst(df: pd.DataFrame) -> dict[str, Any]:
-    """Find local days with 23 or 25 hours (spring-forward / fall-back)."""
+    """Find local days with 23 or 25 hours (spring-forward / fall-back).
+
+    The first and last local calendar days are excluded: when the data window
+    does not begin/end at local midnight they are partial by construction (e.g.
+    a UTC-midnight start is 01:00 Berlin in winter, giving a 23-hour first day),
+    which would otherwise be misreported as a spring-forward transition.
+    """
     local_dates = df.index.tz_convert(BERLIN).date
-    counts = pd.Series(local_dates).value_counts()
-    short = sorted(str(d) for d, c in counts.items() if c == 23)
-    long = sorted(str(d) for d, c in counts.items() if c == 25)
+    counts = pd.Series(local_dates).value_counts().sort_index()
+    interior = counts.iloc[1:-1] if len(counts) > 2 else counts
+    short = sorted(str(d) for d, c in interior.items() if c == 23)
+    long = sorted(str(d) for d, c in interior.items() if c == 25)
     return {
         "n_short_days_23h": len(short),
         "n_long_days_25h": len(long),
