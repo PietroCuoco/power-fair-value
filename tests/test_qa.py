@@ -72,6 +72,16 @@ def test_gap_fill_respects_limit():
     assert rep["remaining_nans_per_col"]["load_actual"] == 6
 
 
+def test_dst_ignores_partial_boundary_day():
+    # Data starting at UTC midnight in winter -> first Berlin day has 23h (01:00-23:00).
+    # That partial boundary day must NOT be flagged as a spring-forward transition.
+    idx = pd.date_range("2024-01-01", "2024-01-05", freq="h", tz="UTC")
+    df = pd.DataFrame({"price_da": range(len(idx))}, index=idx, dtype="float64")
+    rep = qa.check_dst(df)
+    assert rep["n_short_days_23h"] == 0
+    assert rep["n_long_days_25h"] == 0
+
+
 def test_index_check_counts_missing_hours():
     df = _synthetic_frame()
     df = df.drop(df.index[30])  # remove one hour

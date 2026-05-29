@@ -68,10 +68,13 @@ SERIES_REGISTRY: dict[str, Series] = {
     "fc_gen_wind_onshore": Series(123, "DE", "forecast"),
     "fc_gen_wind_offshore": Series(3791, "DE", "forecast"),
     "fc_gen_pv": Series(125, "DE", "forecast"),
-    # Day-ahead forecasted consumption (confirmed live via discover). Expected
-    # mapping 411 = total load, 413 = residual load; verify by magnitude.
+    # Day-ahead forecasted total load (Netzlast). Validated by magnitude: mean
+    # ~53 GW matches German load. The other live candidate (filter 413) averaged
+    # ~0.09 GW, far from the ~34 GW residual-load level reported by the
+    # Bundesnetzagentur, so it is NOT residual load and is excluded. The residual
+    # load forecast is constructed in the feature layer as
+    # fc_load_total - fc_gen_wind_pv.
     "fc_load_total": Series(411, "DE", "forecast"),
-    "fc_residual_load": Series(413, "DE", "forecast"),  # prime point-in-time driver
 }
 
 # Candidate filter ids to probe for a day-ahead *load* forecast. We do not know
