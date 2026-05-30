@@ -63,3 +63,61 @@ class RidgeModel:
         if self.pipe is None:
             raise RuntimeError("RidgeModel must be fit before predict.")
         return self.pipe.predict(X)
+
+
+class LightGBMModel:
+    """Gradient-boosted trees: the improved model.
+
+    Trees capture what the linear baseline cannot - the nonlinear, convex
+    merit-order relationship (price rises steeply once residual load pushes into
+    expensive peaking plant) and sharp spike/negative-price regimes.
+
+    If ``quantile`` is None the model predicts the conditional median-like point
+    forecast with an L1 (MAE-aligned, spike-robust) objective. If ``quantile``
+    is set, it fits LightGBM's pinball-loss quantile objective at that level,
+    used to build prediction intervals.
+
+    Calendar columns (hour, dow, month) are passed as categorical so the trees
+    split on them as unordered categories. They are kept as non-negative
+    integers (not pandas ``category`` dtype) so the value->category mapping is
+    identical across walk-forward folds.
+    """
+
+    CATEGORICAL = ["hour", "dow", "month"]
+
+    def __init__(self, quantile: float | None = None, params: dict | None = None) -> None:
+        self.quantile = quantile
+        base = {
+            "n_estimators": 400,
+            "learning_rate": 0.05,
+            "num_leaves": 63,
+            "min_child_samples": 50,
+            "subsample": 0.8,
+            "subsample_freq": 1,
+            "colsample_bytree": 0.8,
+            "random_state": 42,
+            "n_jobs": -1,
+            "verbose": -1,
+        }
+        if quantile is None:
+            base["objective"] = "regression_l1"
+        else:
+            base["objective"] = "quantile"
+            base["alpha"] = quantile
+        if params:
+            base.update(params)
+        self.params = base
+        self.model: object | None = None
+
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> LightGBMModel:
+        import lightgbm as lgb
+
+        cat = [c for c in self.CATEGORICAL if c in X.columns]
+        self.model = lgb.LGBMRegressor(**self.params)
+        self.model.fit(X, y, categorical_feature=cat)
+        return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        if self.model is None:
+            raise RuntimeError("LightGBMModel must be fit before predict.")
+        return self.model.predict(X)

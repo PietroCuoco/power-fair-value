@@ -102,6 +102,49 @@ def _stage_baselines(cfg: dict) -> None:
     print(f"[baselines] saved preds_baselines.parquet to {out_dir}")
 
 
+def _stage_model(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    xp, yp = out_dir / "features_X.parquet", out_dir / "target_y.parquet"
+    bp = out_dir / "preds_baselines.parquet"
+    if not (xp.exists() and yp.exists() and bp.exists()):
+        raise SystemExit("[model] need features and baselines - run those stages first.")
+    X = pd.read_parquet(xp)
+    y = pd.read_parquet(yp)["price_da"]
+    base = pd.read_parquet(bp)
+
+    wf = cfg["model"]["walk_forward"]
+    splitter = val.WalkForwardSplitter(wf["initial_train_days"], wf["step_days"])
+    quantiles = tuple(cfg["model"].get("quantiles", [0.05, 0.5, 0.95]))
+
+    print("[model] running LightGBM quantile walk-forward (this takes a few minutes) ...")
+    preds, actual = val.run_quantile_backtest(X, y, splitter, quantiles=quantiles)
+    base = base.reindex(actual.index)
+    point = preds["q50"]
+
+    mae_l, rmse_l = val.mae(actual, point), val.rmse(actual, point)
+    mae_n = val.mae(actual, base["seasonal_naive"])
+    mae_r = val.mae(actual, base["ridge"])
+
+    e_lgbm = actual - point
+    dm_n_stat, dm_n_p = val.diebold_mariano(actual - base["seasonal_naive"], e_lgbm)
+    dm_r_stat, dm_r_p = val.diebold_mariano(actual - base["ridge"], e_lgbm)
+    cov = val.interval_coverage(actual, preds["q05"], preds["q95"])
+
+    print(f"[model] out-of-sample hours: {len(actual):,}")
+    print(f"[model] LightGBM   MAE {mae_l:6.2f}  RMSE {rmse_l:6.2f}")
+    print(f"[model] skill vs naive: {val.skill_score(mae_l, mae_n):+.1%}  "
+          f"| skill vs ridge: {val.skill_score(mae_l, mae_r):+.1%}")
+    print(f"[model] DM vs naive: stat {dm_n_stat:+.2f}, p {dm_n_p:.2e}  "
+          f"(positive stat => LightGBM more accurate)")
+    print(f"[model] DM vs ridge: stat {dm_r_stat:+.2f}, p {dm_r_p:.2e}")
+    print(f"[model] 90% interval coverage: {cov:.1%}  (target 90%)")
+
+    out = preds.copy()
+    out["actual"] = actual
+    out.to_parquet(out_dir / "preds_model.parquet")
+    print(f"[model] saved preds_model.parquet to {out_dir}")
+
+
 def _stage_discover() -> None:
     print("[discover] probing candidate forecast-load filter ids ...")
     print(ingest.discover().to_string(index=False))
@@ -111,7 +154,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Power fair-value pipeline")
     parser.add_argument(
         "--stage",
-        choices=["ingest", "qa", "features", "baselines", "discover", "all"],
+        choices=["ingest", "qa", "features", "baselines", "model", "discover", "all"],
         default="all",
     )
     parser.add_argument("--config", default="config/config.yaml")
@@ -130,6 +173,8 @@ def main() -> None:
         _stage_features(cfg)
     if args.stage in ("baselines", "all"):
         _stage_baselines(cfg)
+    if args.stage in ("model", "all"):
+        _stage_model(cfg)
 
 
 if __name__ == "__main__":

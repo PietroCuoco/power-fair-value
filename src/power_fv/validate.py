@@ -99,3 +99,99 @@ def run_backtest(
     pred = pd.concat(preds).sort_index()
     actual = y.loc[pred.index]
     return pred, actual
+
+
+# --- Quantile backtest and interval coverage --------------------------------
+
+
+def run_quantile_backtest(
+    X: pd.DataFrame,
+    y: pd.Series,
+    splitter: WalkForwardSplitter,
+    quantiles: tuple[float, ...] = (0.05, 0.5, 0.95),
+    params: dict | None = None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Walk-forward backtest fitting one LightGBM per quantile per fold.
+
+    Returns a DataFrame with one column per quantile (e.g. q05, q50, q95) and
+    the aligned actuals. Quantiles are sorted row-wise to remove any quantile
+    crossing (a separately-fit q95 occasionally dips below q50).
+    """
+    from power_fv.models import LightGBMModel
+
+    cols: dict[float, list[pd.Series]] = {q: [] for q in quantiles}
+    for train_idx, test_idx in splitter.split(X.index):
+        for q in quantiles:
+            model = LightGBMModel(quantile=q, params=params).fit(
+                X.loc[train_idx], y.loc[train_idx]
+            )
+            cols[q].append(pd.Series(model.predict(X.loc[test_idx]), index=test_idx))
+
+    preds = pd.DataFrame(
+        {f"q{int(q * 100):02d}": pd.concat(s).sort_index() for q, s in cols.items()}
+    )
+    # Enforce monotonicity across quantiles (anti-crossing).
+    preds.iloc[:, :] = np.sort(preds.to_numpy(), axis=1)
+    actual = y.loc[preds.index]
+    return preds, actual
+
+
+def interval_coverage(actual: pd.Series, lower: pd.Series, upper: pd.Series) -> float:
+    """Empirical fraction of actuals falling within [lower, upper]."""
+    inside = (actual.to_numpy() >= lower.to_numpy()) & (actual.to_numpy() <= upper.to_numpy())
+    return float(np.mean(inside))
+
+
+# --- Diebold-Mariano test ---------------------------------------------------
+
+
+def diebold_mariano(
+    error1: pd.Series, error2: pd.Series, loss: str = "abs", h: int = 24
+) -> tuple[float, float]:
+    """Diebold-Mariano test of equal predictive accuracy.
+
+    Parameters
+    ----------
+    error1, error2 : forecast errors (actual - prediction) of model 1 and 2.
+    loss : "abs" (compares MAE) or "sq" (compares MSE).
+    h : Newey-West truncation lag. Forecast errors are autocorrelated (daily
+        structure in hourly data), so we use a HAC variance with a Bartlett
+        kernel. Default 24 covers one day of intraday autocorrelation.
+
+    Returns
+    -------
+    (dm_stat, p_value)
+        The loss differential is d = loss(error1) - loss(error2). A positive
+        dm_stat means model 1 has the higher loss, i.e. model 2 is more
+        accurate; the p-value is two-sided (standard normal).
+    """
+    from scipy.stats import norm
+
+    e1 = np.asarray(error1, dtype="float64")
+    e2 = np.asarray(error2, dtype="float64")
+    if loss == "abs":
+        d = np.abs(e1) - np.abs(e2)
+    elif loss == "sq":
+        d = e1**2 - e2**2
+    else:
+        raise ValueError("loss must be 'abs' or 'sq'")
+
+    n = len(d)
+    d_bar = d.mean()
+    d_dem = d - d_bar
+
+    # Newey-West HAC long-run variance with Bartlett weights.
+    gamma0 = np.sum(d_dem * d_dem) / n
+    var = gamma0
+    for lag in range(1, h):
+        if lag >= n:
+            break
+        cov = np.sum(d_dem[lag:] * d_dem[:-lag]) / n
+        weight = 1.0 - lag / h
+        var += 2.0 * weight * cov
+
+    if var <= 0:  # identical error series -> no difference to detect
+        return 0.0, 1.0
+    dm_stat = d_bar / np.sqrt(var / n)
+    p_value = 2.0 * (1.0 - norm.cdf(abs(dm_stat)))
+    return float(dm_stat), float(p_value)
