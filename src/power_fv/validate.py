@@ -195,3 +195,66 @@ def diebold_mariano(
     dm_stat = d_bar / np.sqrt(var / n)
     p_value = 2.0 * (1.0 - norm.cdf(abs(dm_stat)))
     return float(dm_stat), float(p_value)
+
+# --- Conformalized quantile regression (CQR) --------------------------------
+
+
+def run_conformal_quantile_backtest(
+    X: pd.DataFrame,
+    y: pd.Series,
+    splitter: WalkForwardSplitter,
+    quantiles: tuple[float, float, float] = (0.05, 0.5, 0.95),
+    alpha: float = 0.10,
+    calib_days: int = 90,
+    params: dict | None = None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Conformalized quantile regression (Romano et al., 2019).
+
+    Raw quantile intervals under-cover because they capture conditional spread
+    but not full predictive uncertainty. CQR fixes this with a finite-sample
+    coverage guarantee: within each fold the most recent ``calib_days`` of the
+    training window are held out as a calibration set; the conformity score
+    E = max(q_lo - y, y - q_hi) measures how far reality spills outside the
+    predicted band; its (1-alpha) empirical quantile Q then widens the test
+    interval to [q_lo - Q, q_hi + Q].
+
+    Returns a DataFrame (q_lo, q_mid, q_hi) and the aligned actuals.
+    """
+    from power_fv.models import LightGBMModel
+
+    q_lo, q_mid, q_hi = quantiles
+    blocks: list[pd.DataFrame] = []
+    for train_idx, test_idx in splitter.split(X.index):
+        cutoff = train_idx.max().normalize() - pd.Timedelta(days=calib_days)
+        fit_idx = train_idx[train_idx < cutoff]
+        calib_idx = train_idx[train_idx >= cutoff]
+        if len(fit_idx) < 24 * 30 or len(calib_idx) < 24 * 7:
+            fit_idx, calib_idx = train_idx, train_idx[-24 * 30:]
+
+        models = {
+            q: LightGBMModel(quantile=q, params=params).fit(X.loc[fit_idx], y.loc[fit_idx])
+            for q in (q_lo, q_mid, q_hi)
+        }
+        lo_c = models[q_lo].predict(X.loc[calib_idx])
+        hi_c = models[q_hi].predict(X.loc[calib_idx])
+        yc = y.loc[calib_idx].to_numpy()
+        scores = np.maximum(lo_c - yc, yc - hi_c)
+
+        n = len(scores)
+        k = min(int(np.ceil((n + 1) * (1 - alpha))), n)
+        q_adj = np.sort(scores)[k - 1]
+
+        block = pd.DataFrame(
+            {
+                "q_lo": models[q_lo].predict(X.loc[test_idx]) - q_adj,
+                "q_mid": models[q_mid].predict(X.loc[test_idx]),
+                "q_hi": models[q_hi].predict(X.loc[test_idx]) + q_adj,
+            },
+            index=test_idx,
+        )
+        blocks.append(block)
+
+    preds = pd.concat(blocks).sort_index()
+    preds.iloc[:, :] = np.sort(preds.to_numpy(), axis=1)  # anti-crossing
+    actual = y.loc[preds.index]
+    return preds, actual

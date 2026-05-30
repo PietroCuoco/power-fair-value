@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from power_fv import analysis as anl
 from power_fv import features as feat
 from power_fv import ingest, qa
 from power_fv import validate as val
@@ -145,6 +146,80 @@ def _stage_model(cfg: dict) -> None:
     print(f"[model] saved preds_model.parquet to {out_dir}")
 
 
+def _stage_conformal(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    xp, yp = out_dir / "features_X.parquet", out_dir / "target_y.parquet"
+    mp = out_dir / "preds_model.parquet"
+    if not (xp.exists() and yp.exists()):
+        raise SystemExit("[conformal] need features - run --stage features first.")
+    X = pd.read_parquet(xp)
+    y = pd.read_parquet(yp)["price_da"]
+
+    wf = cfg["model"]["walk_forward"]
+    splitter = val.WalkForwardSplitter(wf["initial_train_days"], wf["step_days"])
+
+    print("[conformal] running CQR walk-forward (this takes a few minutes) ...")
+    preds, actual = val.run_conformal_quantile_backtest(X, y, splitter, alpha=0.10)
+    cov_after = val.interval_coverage(actual, preds["q_lo"], preds["q_hi"])
+    width_after = float((preds["q_hi"] - preds["q_lo"]).mean())
+
+    if mp.exists():
+        raw = pd.read_parquet(mp).reindex(actual.index)
+        cov_before = val.interval_coverage(actual, raw["q05"], raw["q95"])
+        width_before = float((raw["q95"] - raw["q05"]).mean())
+        print(f"[conformal] coverage before (raw):  {cov_before:.1%}, width {width_before:.1f}")
+    print(
+        f"[conformal] coverage after (CQR):   {cov_after:.1%}, "
+        f"width {width_after:.1f}  (target 90%)"
+    )
+
+    out = preds.copy()
+    out["actual"] = actual
+    out.to_parquet(out_dir / "preds_conformal.parquet")
+    print(f"[conformal] saved preds_conformal.parquet to {out_dir}")
+
+
+def _stage_ablation(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    xp, yp = out_dir / "features_X.parquet", out_dir / "target_y.parquet"
+    if not (xp.exists() and yp.exists()):
+        raise SystemExit("[ablation] need features - run --stage features first.")
+    X = pd.read_parquet(xp)
+    y = pd.read_parquet(yp)["price_da"]
+
+    wf = cfg["model"]["walk_forward"]
+    splitter = val.WalkForwardSplitter(wf["initial_train_days"], wf["step_days"])
+
+    print("[ablation] retraining LightGBM under feature ablations (a few minutes) ...")
+    res = anl.forecast_feature_ablation(X, y, splitter)
+    full = res["full"]
+    print(f"[ablation] full feature set       MAE {full:6.2f}")
+    for name, value in res.items():
+        if name == "full":
+            continue
+        print(f"[ablation] {name:24s} MAE {value:6.2f}  (+{value - full:5.2f} vs full)")
+
+
+def _stage_breakdown(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    mp = out_dir / "preds_model.parquet"
+    if not mp.exists():
+        raise SystemExit("[breakdown] need preds_model - run --stage model first.")
+    preds = pd.read_parquet(mp)
+    table, by_hour, spike_level = anl.error_breakdown(preds["actual"], preds["q50"])
+
+    print(f"[breakdown] spike threshold (95th pct): {spike_level:.1f} EUR/MWh")
+    print("[breakdown] MAE by regime:")
+    for regime, row in table.iterrows():
+        print(f"[breakdown]   {regime:9s} MAE {row['mae']:6.2f}  (n={int(row['n']):,})")
+    worst = by_hour.sort_values(ascending=False).head(3)
+    print(f"[breakdown] worst hours (local): {[int(h) for h in worst.index]} "
+          f"with MAE {[round(float(v), 1) for v in worst.values]}")
+    by_hour.to_frame().to_parquet(out_dir / "mae_by_hour.parquet")
+    table.to_parquet(out_dir / "mae_by_regime.parquet")
+    print(f"[breakdown] saved mae_by_hour.parquet and mae_by_regime.parquet to {out_dir}")
+
+
 def _stage_discover() -> None:
     print("[discover] probing candidate forecast-load filter ids ...")
     print(ingest.discover().to_string(index=False))
@@ -154,7 +229,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Power fair-value pipeline")
     parser.add_argument(
         "--stage",
-        choices=["ingest", "qa", "features", "baselines", "model", "discover", "all"],
+        choices=[
+            "ingest", "qa", "features", "baselines", "model",
+            "conformal", "ablation", "breakdown", "discover", "all",
+        ],
         default="all",
     )
     parser.add_argument("--config", default="config/config.yaml")
@@ -175,6 +253,12 @@ def main() -> None:
         _stage_baselines(cfg)
     if args.stage in ("model", "all"):
         _stage_model(cfg)
+    if args.stage in ("conformal", "all"):
+        _stage_conformal(cfg)
+    if args.stage in ("ablation", "all"):
+        _stage_ablation(cfg)
+    if args.stage in ("breakdown", "all"):
+        _stage_breakdown(cfg)
 
 
 if __name__ == "__main__":
