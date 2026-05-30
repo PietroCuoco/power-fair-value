@@ -220,6 +220,23 @@ def _stage_breakdown(cfg: dict) -> None:
     print(f"[breakdown] saved mae_by_hour.parquet and mae_by_regime.parquet to {out_dir}")
 
 
+def _stage_shap(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    xp, yp = out_dir / "features_X.parquet", out_dir / "target_y.parquet"
+    if not (xp.exists() and yp.exists()):
+        raise SystemExit("[shap] need features - run --stage features first.")
+    X = pd.read_parquet(xp)
+    y = pd.read_parquet(yp)["price_da"]
+
+    print("[shap] fitting model and computing SHAP attributions ...")
+    imp = anl.shap_importance(X, y)
+    print("[shap] top features by mean |SHAP| (EUR/MWh contribution to prediction):")
+    for name, value in imp.head(12).items():
+        print(f"[shap]   {name:26s} {value:7.3f}")
+    imp.to_frame("mean_abs_shap").to_parquet(out_dir / "shap_importance.parquet")
+    print(f"[shap] saved shap_importance.parquet to {out_dir}")
+
+
 def _stage_discover() -> None:
     print("[discover] probing candidate forecast-load filter ids ...")
     print(ingest.discover().to_string(index=False))
@@ -231,7 +248,7 @@ def main() -> None:
         "--stage",
         choices=[
             "ingest", "qa", "features", "baselines", "model",
-            "conformal", "ablation", "breakdown", "discover", "all",
+            "conformal", "ablation", "breakdown", "shap", "discover", "all",
         ],
         default="all",
     )
@@ -259,6 +276,8 @@ def main() -> None:
         _stage_ablation(cfg)
     if args.stage in ("breakdown", "all"):
         _stage_breakdown(cfg)
+    if args.stage in ("shap", "all"):
+        _stage_shap(cfg)
 
 
 if __name__ == "__main__":

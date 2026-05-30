@@ -61,3 +61,12 @@ def test_error_breakdown_regimes():
     assert table.loc["negative", "n"] == 10
     assert len(by_hour) <= 24
     assert spike_level > 50  # 95th percentile sits above the mean
+
+
+def test_shap_importance_ranks_dominant_driver_top():
+    X, y = _market_with_forecasts(days=120)
+    # residual_load_fc has the strongest coefficient in _market_with_forecasts,
+    # so it (or its near-duplicate fc_load_total) should rank among the top.
+    imp = A.shap_importance(X, y, sample_size=1500, params={"n_estimators": 120})
+    assert imp.index[0] in {"residual_load_fc", "fc_load_total", "price_lag_168h"}
+    assert (imp >= 0).all()

@@ -13,6 +13,7 @@ These tools answer two questions a reviewer will ask:
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from power_fv.models import LightGBMModel
@@ -84,3 +85,33 @@ def error_breakdown(
     hours = pd.Series(actual.index.tz_convert(BERLIN).hour, index=actual.index)
     mae_by_hour = err.groupby(hours).mean().rename("mae_by_hour")
     return regime_table, mae_by_hour, spike_level
+
+
+def shap_importance(
+    X: pd.DataFrame,
+    y: pd.Series,
+    sample_size: int = 3000,
+    params: dict | None = None,
+    seed: int = 42,
+) -> pd.Series:
+    """Mean absolute SHAP value per feature (global importance).
+
+    Fits the median LightGBM on the full data (this is an attribution exercise,
+    not an out-of-sample skill measurement), then explains a random sample of
+    rows with a fast TreeExplainer. Returns features ranked by mean |SHAP|,
+    i.e. each feature's average contribution magnitude to the prediction.
+    """
+    import shap
+
+    model = LightGBMModel(quantile=0.5, params=params).fit(X, y)
+    rng = np.random.default_rng(seed)
+    if len(X) > sample_size:
+        positions = rng.choice(len(X), size=sample_size, replace=False)
+        sample = X.iloc[np.sort(positions)]
+    else:
+        sample = X
+
+    explainer = shap.TreeExplainer(model.model)
+    shap_values = explainer.shap_values(sample)
+    importance = pd.Series(np.abs(shap_values).mean(axis=0), index=X.columns)
+    return importance.sort_values(ascending=False)
