@@ -85,8 +85,14 @@ def _stage_baselines(cfg: dict) -> None:
     ridge_mae = val.mae(actual, ridge_pred)
 
     print(f"[baselines] out-of-sample hours: {len(actual):,}")
-    print(f"[baselines] seasonal-naive  MAE {naive_mae:6.2f}  RMSE {val.rmse(actual, naive_pred):6.2f}")
-    print(f"[baselines] ridge           MAE {ridge_mae:6.2f}  RMSE {val.rmse(actual, ridge_pred):6.2f}")
+    print(
+        f"[baselines] seasonal-naive  MAE {naive_mae:6.2f}  "
+        f"RMSE {val.rmse(actual, naive_pred):6.2f}"
+    )
+    print(
+        f"[baselines] ridge           MAE {ridge_mae:6.2f}  "
+        f"RMSE {val.rmse(actual, ridge_pred):6.2f}"
+    )
     print(f"[baselines] ridge skill vs naive: {val.skill_score(ridge_mae, naive_mae):+.1%}")
 
     preds = pd.DataFrame(

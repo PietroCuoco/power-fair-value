@@ -30,7 +30,7 @@ class SeasonalNaive:
 
     column = "price_lag_168h"
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "SeasonalNaive":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> SeasonalNaive:
         if self.column not in X.columns:
             raise KeyError(f"SeasonalNaive needs the '{self.column}' feature.")
         return self
@@ -46,7 +46,7 @@ class RidgeModel:
         self.alpha = alpha
         self.pipe: Pipeline | None = None
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "RidgeModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> RidgeModel:
         categorical = [c for c in CATEGORICAL if c in X.columns]
         numeric = [c for c in X.columns if c not in categorical]
         pre = ColumnTransformer(
