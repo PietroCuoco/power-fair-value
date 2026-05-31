@@ -16,6 +16,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")  # headless
+import matplotlib.animation as manim  # noqa: E402
 import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -365,11 +366,51 @@ def fig_cost_sensitivity(proc: Path, fig_dir: Path) -> Path:
     return _save(fig, fig_dir, "15_cost_sensitivity")
 
 
+# --- 16. EVOLUTION: walk-forward animation (GIF for the README) -------------
+
+def fig_walkforward_evolution(proc: Path, fig_dir: Path, step_days: int = 30) -> Path:
+    price = pd.read_parquet(proc / "target_y.parquet")["price_da"].sort_index()
+    m = pd.read_parquet(proc / "preds_model.parquet").sort_index()
+    actual_d = price.resample("D").mean()
+    fc_d = m["q50"].resample("D").mean()
+    start, end = actual_d.index.min(), fc_d.index.max()
+    cutoffs = pd.date_range(fc_d.index.min(), end, freq=f"{step_days}D")
+    ylo, yhi = float(actual_d.min()), float(actual_d.max())
+    fig, ax = plt.subplots(figsize=(9, 3.8))
+
+    def draw(i: int) -> None:
+        ax.clear()
+        cut = cutoffs[i]
+        nxt = cut + pd.Timedelta(days=step_days)
+        a = actual_d.loc[:nxt]
+        f = fc_d.loc[:nxt]
+        ax.axvspan(start, cut, color=C_RIDGE, alpha=0.10)
+        ax.plot(a.index, a.values, color="#222", lw=0.8, label="actual (daily mean)")
+        ax.plot(f.index, f.values, color=C_LGBM, lw=1.0, ls="--", label="forecast (revealed)")
+        ax.axvline(cut, color=C_RIDGE, lw=1.2)
+        ax.text(cut, yhi, "  train | predict ->", color=C_RIDGE, fontsize=8, va="top")
+        ax.set_xlim(start, end)
+        ax.set_ylim(ylo - 5, yhi + 5)
+        ax.set_ylabel("EUR/MWh")
+        ax.grid(alpha=0.25)
+        ax.set_title(f"Walk-forward: expanding window, no look-ahead "
+                     f"(fold {i + 1}/{len(cutoffs)})")
+        ax.legend(loc="upper left", fontsize=8)
+
+    anim = manim.FuncAnimation(fig, draw, frames=len(cutoffs), interval=250)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    path = fig_dir / "16_walkforward_evolution.gif"
+    anim.save(path, writer=manim.PillowWriter(fps=4))
+    plt.close(fig)
+    return path
+
+
 _FIGURES = [
     fig_price_overview, fig_merit_order, fig_forecast_week, fig_model_comparison,
     fig_cumulative_skill, fig_error_distribution, fig_mae_by_hour, fig_mae_by_regime,
     fig_coverage, fig_shap, fig_ablation, fig_feature_correlation,
     fig_trading_equity, fig_trading_significance, fig_cost_sensitivity,
+    fig_walkforward_evolution,
 ]
 
 
