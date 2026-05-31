@@ -23,6 +23,7 @@ import pandas as pd
 from power_fv import analysis as anl
 from power_fv import features as feat
 from power_fv import ingest, qa
+from power_fv import trade as trd
 from power_fv import validate as val
 from power_fv.config import load_config
 from power_fv.models import RidgeModel, SeasonalNaive
@@ -237,6 +238,40 @@ def _stage_shap(cfg: dict) -> None:
     print(f"[shap] saved shap_importance.parquet to {out_dir}")
 
 
+def _stage_trade(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    mp = out_dir / "preds_model.parquet"
+    if not mp.exists():
+        raise SystemExit("[trade] need preds_model - run --stage model first.")
+    preds = pd.read_parquet(mp)
+    peak = cfg["trading"]["peak_hours"]
+
+    model_daily = trd.to_daily_products(preds["q50"], peak)["baseload"]
+    real_daily = trd.to_daily_products(preds["actual"], peak)["baseload"]
+    proxy = trd.forward_proxy(real_daily, window=7)
+    premium = trd.rolling_premium(real_daily, proxy, window=60)
+    threshold = trd.rolling_threshold(model_daily, real_daily, window=30, k=1.0)
+
+    res = trd.backtest_signal(model_daily, real_daily, proxy, threshold, premium=premium, cost=0.5)
+    stats = trd.summarize_backtest(res)
+
+    bench = (real_daily - proxy).dropna()
+    bench_total = float(bench.loc[res.index].sum()) if len(res) else float("nan")
+    mean_premium = float(pd.Series(premium).dropna().mean())
+
+    print(f"[trade] estimated risk premium (realized - proxy): {mean_premium:+.2f} EUR/MWh")
+    print(f"[trade] trading days: {stats['n_days']:,}  trades: {stats['n_trades']:,} "
+          f"(long {stats['n_long']:,} / short {stats['n_short']:,})")
+    print(f"[trade] hit rate: {stats['hit_rate']:.1%}  "
+          f"avg P&L/trade: {stats['avg_pnl_per_trade']:+.2f} EUR/MWh")
+    print(f"[trade] total signal P&L: {stats['total_pnl']:+.1f}  "
+          f"info ratio/trade: {stats['info_ratio_per_trade']:+.2f}")
+    print(f"[trade] benchmark (always-long vs proxy) P&L: {bench_total:+.1f} EUR/MWh")
+
+    res.to_parquet(out_dir / "trade_backtest.parquet")
+    print(f"[trade] saved trade_backtest.parquet to {out_dir}")
+
+
 def _stage_discover() -> None:
     print("[discover] probing candidate forecast-load filter ids ...")
     print(ingest.discover().to_string(index=False))
@@ -248,7 +283,7 @@ def main() -> None:
         "--stage",
         choices=[
             "ingest", "qa", "features", "baselines", "model",
-            "conformal", "ablation", "breakdown", "shap", "discover", "all",
+            "conformal", "ablation", "breakdown", "shap", "trade", "discover", "all",
         ],
         default="all",
     )
@@ -278,6 +313,8 @@ def main() -> None:
         _stage_breakdown(cfg)
     if args.stage in ("shap", "all"):
         _stage_shap(cfg)
+    if args.stage in ("trade", "all"):
+        _stage_trade(cfg)
 
 
 if __name__ == "__main__":
