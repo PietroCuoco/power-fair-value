@@ -241,35 +241,41 @@ def _stage_shap(cfg: dict) -> None:
 def _stage_trade(cfg: dict) -> None:
     out_dir = Path(cfg["data"]["processed_dir"])
     mp = out_dir / "preds_model.parquet"
-    if not mp.exists():
-        raise SystemExit("[trade] need preds_model - run --stage model first.")
+    bp = out_dir / "preds_baselines.parquet"
+    if not (mp.exists() and bp.exists()):
+        raise SystemExit("[trade] need preds_model and preds_baselines - run those stages first.")
     preds = pd.read_parquet(mp)
+    base = pd.read_parquet(bp)
     peak = cfg["trading"]["peak_hours"]
 
     model_daily = trd.to_daily_products(preds["q50"], peak)["baseload"]
     real_daily = trd.to_daily_products(preds["actual"], peak)["baseload"]
-    proxy = trd.forward_proxy(real_daily, window=7)
-    premium = trd.rolling_premium(real_daily, proxy, window=60)
+    ridge_daily = trd.to_daily_products(base["ridge"].reindex(preds.index), peak)["baseload"]
+
     threshold = trd.rolling_threshold(model_daily, real_daily, window=30, k=1.0)
 
-    res = trd.backtest_signal(model_daily, real_daily, proxy, threshold, premium=premium, cost=0.5)
-    stats = trd.summarize_backtest(res)
+    def _run(proxy: pd.Series, label: str) -> None:
+        premium = trd.rolling_premium(real_daily, proxy, window=60)
+        res = trd.backtest_signal(
+            model_daily, real_daily, proxy, threshold, premium=premium, cost=0.5
+        )
+        s = trd.summarize_backtest(res)
+        print(
+            f"[trade] [{label}] trades {s['n_trades']:,} | hit rate {s['hit_rate']:.1%} | "
+            f"avg P&L/trade {s['avg_pnl_per_trade']:+.2f} | "
+            f"info ratio {s['info_ratio_per_trade']:+.2f}"
+        )
+        res.to_parquet(out_dir / f"trade_backtest_{label}.parquet")
 
-    bench = (real_daily - proxy).dropna()
-    bench_total = float(bench.loc[res.index].sum()) if len(res) else float("nan")
-    mean_premium = float(pd.Series(premium).dropna().mean())
+    print("[trade] DIAGNOSTIC - naive backward-looking anchor (trailing realized baseload):")
+    print("[trade]   an unrealistically weak 'forward'; a good forecaster beats it trivially.")
+    _run(trd.forward_proxy(real_daily, window=7), "anchor")
 
-    print(f"[trade] estimated risk premium (realized - proxy): {mean_premium:+.2f} EUR/MWh")
-    print(f"[trade] trading days: {stats['n_days']:,}  trades: {stats['n_trades']:,} "
-          f"(long {stats['n_long']:,} / short {stats['n_short']:,})")
-    print(f"[trade] hit rate: {stats['hit_rate']:.1%}  "
-          f"avg P&L/trade: {stats['avg_pnl_per_trade']:+.2f} EUR/MWh")
-    print(f"[trade] total signal P&L: {stats['total_pnl']:+.1f}  "
-          f"info ratio/trade: {stats['info_ratio_per_trade']:+.2f}")
-    print(f"[trade] benchmark (always-long vs proxy) P&L: {bench_total:+.1f} EUR/MWh")
-
-    res.to_parquet(out_dir / "trade_backtest.parquet")
-    print(f"[trade] saved trade_backtest.parquet to {out_dir}")
+    print("[trade] REALISTIC - forward-looking consensus (market prices like the Ridge model):")
+    print("[trade]   measures only LightGBM's incremental, nonlinear edge over public info.")
+    _run(ridge_daily, "consensus")
+    print("[trade] note: a real forward curve would embed public forecasts; true alpha "
+          "likely sits at or below the consensus result. This is a mechanism demonstration.")
 
 
 def _stage_discover() -> None:
