@@ -254,7 +254,7 @@ def _stage_trade(cfg: dict) -> None:
 
     threshold = trd.rolling_threshold(model_daily, real_daily, window=30, k=1.0)
 
-    def _run(proxy: pd.Series, label: str) -> None:
+    def _run(proxy: pd.Series, label: str) -> pd.DataFrame:
         premium = trd.rolling_premium(real_daily, proxy, window=60)
         res = trd.backtest_signal(
             model_daily, real_daily, proxy, threshold, premium=premium, cost=0.5
@@ -266,6 +266,7 @@ def _stage_trade(cfg: dict) -> None:
             f"info ratio {s['info_ratio_per_trade']:+.2f}"
         )
         res.to_parquet(out_dir / f"trade_backtest_{label}.parquet")
+        return res
 
     print("[trade] DIAGNOSTIC - naive backward-looking anchor (trailing realized baseload):")
     print("[trade]   an unrealistically weak 'forward'; a good forecaster beats it trivially.")
@@ -273,7 +274,24 @@ def _stage_trade(cfg: dict) -> None:
 
     print("[trade] REALISTIC - forward-looking consensus (market prices like the Ridge model):")
     print("[trade]   measures only LightGBM's incremental, nonlinear edge over public info.")
-    _run(ridge_daily, "consensus")
+    res_consensus = _run(ridge_daily, "consensus")
+
+    # Invalidation rule: only act on high-confidence days. Confidence = the
+    # model's own predicted interval is narrow relative to its recent typical
+    # width. Point-in-time: predicted width is known at the gate; the cutoff is
+    # a trailing, shifted median, so no realised outcome enters the decision.
+    width = trd.to_daily_products(preds["q95"] - preds["q05"], peak)["baseload"]
+    width_cut = width.shift(1).rolling(60, min_periods=60).median()
+    high_conf = width < width_cut
+    res_cf = trd.apply_confidence_filter(res_consensus, high_conf)
+    s = trd.summarize_backtest(res_cf)
+    print("[trade] INVALIDATION - consensus, high-confidence (narrow-interval) days only:")
+    print(
+        f"[trade] [consensus+confidence] trades {s['n_trades']:,} | hit rate {s['hit_rate']:.1%} | "
+        f"avg P&L/trade {s['avg_pnl_per_trade']:+.2f} | "
+        f"info ratio {s['info_ratio_per_trade']:+.2f}"
+    )
+    res_cf.to_parquet(out_dir / "trade_backtest_consensus_confident.parquet")
     print("[trade] note: a real forward curve would embed public forecasts; true alpha "
           "likely sits at or below the consensus result. This is a mechanism demonstration.")
 

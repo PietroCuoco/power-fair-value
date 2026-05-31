@@ -127,3 +127,19 @@ def summarize_backtest(res: pd.DataFrame) -> dict[str, float]:
         "info_ratio_per_trade": info_ratio,
     }
     return stats
+
+
+def apply_confidence_filter(res: pd.DataFrame, high_confidence: pd.Series) -> pd.DataFrame:
+    """Stand down on low-confidence days - an explicit invalidation rule.
+
+    ``high_confidence`` is a boolean Series (indexed by day) marking days the
+    model is confident enough to act on, e.g. days whose predicted interval is
+    narrow. Days that are False or missing have their position (and P&L) zeroed.
+    The mask must be point-in-time: built only from information known at the
+    decision time (predicted interval width), never from realised outcomes.
+    """
+    out = res.copy()
+    keep = high_confidence.reindex(out.index).fillna(False).to_numpy().astype(bool)
+    out.loc[~keep, "position"] = 0
+    out.loc[~keep, "pnl"] = 0.0
+    return out

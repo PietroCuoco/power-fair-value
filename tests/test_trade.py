@@ -69,3 +69,17 @@ def test_summarize_counts():
     assert stats["n_long"] == 2
     assert stats["n_short"] == 1
     assert abs(stats["hit_rate"] - 2.0 / 3.0) < 1e-9
+
+
+def test_confidence_filter_zeros_low_confidence_days():
+    days = pd.date_range("2024-01-01", periods=4, freq="D")
+    res = pd.DataFrame(
+        {"position": [1, -1, 1, -1], "pnl": [2.0, 3.0, -1.0, 4.0]},
+        index=days,
+    )
+    res["edge"] = 0.0
+    res["settle"] = 0.0
+    mask = pd.Series([True, False, True, False], index=days)
+    out = T.apply_confidence_filter(res, mask)
+    assert list(out["position"]) == [1, 0, 1, 0]
+    assert list(out["pnl"]) == [2.0, 0.0, -1.0, 0.0]
