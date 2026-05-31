@@ -22,7 +22,7 @@ import pandas as pd
 
 from power_fv import analysis as anl
 from power_fv import features as feat
-from power_fv import ingest, qa
+from power_fv import ingest, plots, qa
 from power_fv import llm as llm_mod
 from power_fv import trade as trd
 from power_fv import validate as val
@@ -200,6 +200,8 @@ def _stage_ablation(cfg: dict) -> None:
         if name == "full":
             continue
         print(f"[ablation] {name:24s} MAE {value:6.2f}  (+{value - full:5.2f} vs full)")
+    pd.Series(res, name="mae").to_frame().to_parquet(out_dir / "ablation.parquet")
+    print(f"[ablation] saved ablation.parquet to {out_dir}")
 
 
 def _stage_breakdown(cfg: dict) -> None:
@@ -321,6 +323,14 @@ def _stage_llm(cfg: dict) -> None:
         print(f"[llm] saved {len(df)} structured events to {out}")
 
 
+def _stage_figures(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    fig_dir = out_dir.parents[1] / "reports" / "figures"
+    print(f"[figures] generating figures into {fig_dir} ...")
+    made = plots.make_all_figures(out_dir, fig_dir)
+    print(f"[figures] wrote {len(made)} figures.")
+
+
 def _stage_discover() -> None:
     print("[discover] probing candidate forecast-load filter ids ...")
     print(ingest.discover().to_string(index=False))
@@ -332,7 +342,8 @@ def main() -> None:
         "--stage",
         choices=[
             "ingest", "qa", "features", "baselines", "model",
-            "conformal", "ablation", "breakdown", "shap", "trade", "llm", "discover", "all",
+            "conformal", "ablation", "breakdown", "shap", "trade", "llm", "figures",
+            "discover", "all",
         ],
         default="all",
     )
@@ -366,6 +377,8 @@ def main() -> None:
         _stage_trade(cfg)
     if args.stage in ("llm", "all"):
         _stage_llm(cfg)
+    if args.stage in ("figures", "all"):
+        _stage_figures(cfg)
 
 
 if __name__ == "__main__":

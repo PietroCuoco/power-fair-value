@@ -13,7 +13,7 @@ shap>=0.45
 # Calendars
 holidays>=0.50
 # Plotting
-matplotlib>=3.8
+matplotlib>=3.7
 # LLM (free-tier; using Gemini by default)
 google-genai>=1.0
 pydantic>=2.0
