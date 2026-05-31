@@ -30,7 +30,7 @@ trading:
   front_week_business_days: 5
 
 llm:
-  provider: gemini           # gemini | groq
-  model: gemini-1.5-flash    # verify current free model name when wiring
+  provider: gemini
+  model: gemini-2.5-flash
   temperature: 0.0
   log_dir: logs/llm

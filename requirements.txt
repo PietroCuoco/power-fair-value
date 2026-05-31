@@ -15,7 +15,8 @@ holidays>=0.50
 # Plotting
 matplotlib>=3.8
 # LLM (free-tier; using Gemini by default)
-google-generativeai>=0.7
+google-genai>=1.0
+pydantic>=2.0
 # groq>=0.9   # uncomment if you use Groq instead
 # Schema validation
 pydantic>=2.6

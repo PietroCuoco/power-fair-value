@@ -23,6 +23,7 @@ import pandas as pd
 from power_fv import analysis as anl
 from power_fv import features as feat
 from power_fv import ingest, qa
+from power_fv import llm as llm_mod
 from power_fv import trade as trd
 from power_fv import validate as val
 from power_fv.config import load_config
@@ -296,6 +297,30 @@ def _stage_trade(cfg: dict) -> None:
           "likely sits at or below the consensus result. This is a mechanism demonstration.")
 
 
+def _stage_llm(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    sample_path = llm_mod.ROOT / "samples" / "outage_news.txt"
+    texts = [ln for ln in sample_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    print(f"[llm] read {len(texts)} outage/news items; provider={cfg['llm']['provider']} "
+          f"model={cfg['llm']['model']}")
+
+    result = llm_mod.extract_from_config(texts, cfg)
+
+    if not result.events:
+        print("[llm] no events extracted - no API key set or provider returned none.")
+        print("[llm] set GEMINI_API_KEY in .env to enable live extraction (logged to logs/llm/).")
+    for e in result.events:
+        cap = f"{e.capacity_mw:.0f} MW" if e.capacity_mw else "n/a"
+        print(f"[llm]   {e.direction.value:7s} | {e.fuel_type:12s} | {cap:>8s} | {e.asset}")
+
+    rows = [e.model_dump(mode="json") for e in result.events]
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        out = out_dir / "llm_events.parquet"
+        df.to_parquet(out)
+        print(f"[llm] saved {len(df)} structured events to {out}")
+
+
 def _stage_discover() -> None:
     print("[discover] probing candidate forecast-load filter ids ...")
     print(ingest.discover().to_string(index=False))
@@ -307,7 +332,7 @@ def main() -> None:
         "--stage",
         choices=[
             "ingest", "qa", "features", "baselines", "model",
-            "conformal", "ablation", "breakdown", "shap", "trade", "discover", "all",
+            "conformal", "ablation", "breakdown", "shap", "trade", "llm", "discover", "all",
         ],
         default="all",
     )
@@ -339,6 +364,8 @@ def main() -> None:
         _stage_shap(cfg)
     if args.stage in ("trade", "all"):
         _stage_trade(cfg)
+    if args.stage in ("llm", "all"):
+        _stage_llm(cfg)
 
 
 if __name__ == "__main__":
