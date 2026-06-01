@@ -323,6 +323,31 @@ def _stage_llm(cfg: dict) -> None:
         print(f"[llm] saved {len(df)} structured events to {out}")
 
 
+def _stage_submission(cfg: dict) -> None:
+    out_dir = Path(cfg["data"]["processed_dir"])
+    mp = out_dir / "preds_model.parquet"
+    if not mp.exists():
+        raise SystemExit("[submission] need preds_model - run --stage model first.")
+    m = pd.read_parquet(mp).sort_index()
+    sub = pd.DataFrame(
+        {
+            "datetime_utc": m.index.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "forecast_eur_per_mwh": m["q50"].round(2).to_numpy(),
+        }
+    )
+    cp = out_dir / "preds_conformal.parquet"
+    if cp.exists():  # prefer the calibrated 90% interval
+        c = pd.read_parquet(cp).reindex(m.index)
+        sub["lower_90_eur_per_mwh"] = c["q_lo"].round(2).to_numpy()
+        sub["upper_90_eur_per_mwh"] = c["q_hi"].round(2).to_numpy()
+    else:
+        sub["lower_90_eur_per_mwh"] = m["q05"].round(2).to_numpy()
+        sub["upper_90_eur_per_mwh"] = m["q95"].round(2).to_numpy()
+    dest = out_dir.parents[1] / "submission.csv"
+    sub.to_csv(dest, index=False)
+    print(f"[submission] wrote {len(sub):,} hourly forecasts to {dest}")
+
+
 def _stage_figures(cfg: dict) -> None:
     out_dir = Path(cfg["data"]["processed_dir"])
     fig_dir = out_dir.parents[1] / "reports" / "figures"
@@ -342,8 +367,8 @@ def main() -> None:
         "--stage",
         choices=[
             "ingest", "qa", "features", "baselines", "model",
-            "conformal", "ablation", "breakdown", "shap", "trade", "llm", "figures",
-            "discover", "all",
+            "conformal", "ablation", "breakdown", "shap", "trade", "llm",
+            "submission", "figures", "discover", "all",
         ],
         default="all",
     )
@@ -377,6 +402,8 @@ def main() -> None:
         _stage_trade(cfg)
     if args.stage in ("llm", "all"):
         _stage_llm(cfg)
+    if args.stage in ("submission", "all"):
+        _stage_submission(cfg)
     if args.stage in ("figures", "all"):
         _stage_figures(cfg)
 

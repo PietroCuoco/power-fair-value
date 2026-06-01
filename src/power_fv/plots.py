@@ -1,10 +1,14 @@
-"""Figure generation for the report and README.
+"""Figure generation for the report and README (curated set of five).
 
-Every figure answers a specific analytical question, uses honest axes (bars from
-zero, labelled units in EUR/MWh or MW), and where it strengthens the argument it
-quantifies uncertainty by simulation rather than asserting it. Figures read the
-result parquets written by the pipeline; each is skipped gracefully if its
-inputs are absent, so a partial pipeline still produces what it can.
+Each figure makes one distinct, defensible scientific claim, with honest axes and
+labelled units (EUR/MWh, MW). Figures read the result parquets written by the
+pipeline and are skipped gracefully if an input is absent.
+
+  01 merit-order            - prices are convex in residual load (nonlinearity)
+  02 model comparison       - LightGBM beats both baselines out-of-sample
+  03 coverage calibration   - CQR restores ~nominal 90% interval coverage
+  04 ablation               - skill comes from fundamentals, not autocorrelation
+  05 trading significance   - the trading edge is real but modest (permutation)
 
 Run via ``python scripts/run_pipeline.py --stage figures``.
 """
@@ -16,17 +20,13 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")  # headless
-import matplotlib.animation as manim  # noqa: E402
-import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-# Consistent palette across figures.
 C_NAIVE = "#9aa0a6"
 C_RIDGE = "#4c78a8"
 C_LGBM = "#c0392b"
-C_BAND = "#c0392b"
 C_ACC = "#2c7d59"
 
 plt.rcParams.update(
@@ -54,26 +54,7 @@ def _abs_err(actual: pd.Series, pred: pd.Series) -> pd.Series:
     return (actual - pred).abs()
 
 
-# --- 1. price overview with regimes ----------------------------------------
-
-def fig_price_overview(proc: Path, fig_dir: Path) -> Path:
-    df = pd.read_parquet(proc / "dataset_clean.parquet")
-    price = df["price_da"]
-    spike = price.quantile(0.95)
-    fig, ax = plt.subplots(figsize=(9, 3.6))
-    ax.plot(price.index, price.values, lw=0.4, color="#34495e", label="Day-ahead price")
-    neg = price[price < 0]
-    hi = price[price >= spike]
-    ax.scatter(neg.index, neg.values, s=4, color="#2980b9", label="negative", zorder=3)
-    ax.scatter(hi.index, hi.values, s=4, color="#e67e22", label="spike (>=95th pct)", zorder=3)
-    ax.axhline(0, color="k", lw=0.6)
-    ax.set_ylabel("EUR/MWh")
-    ax.set_title("German day-ahead price: full sample, with negative and spike regimes")
-    ax.legend(loc="upper left", ncol=3, fontsize=8, framealpha=0.9)
-    return _save(fig, fig_dir, "01_price_overview")
-
-
-# --- 2. merit-order curve ---------------------------------------------------
+# --- 01. merit-order curve --------------------------------------------------
 
 def fig_merit_order(proc: Path, fig_dir: Path) -> Path:
     X = pd.read_parquet(proc / "features_X.parquet")
@@ -90,29 +71,10 @@ def fig_merit_order(proc: Path, fig_dir: Path) -> Path:
     ax.set_title("Merit-order structure: price rises convexly with residual load")
     ax.legend(loc="upper left", fontsize=8)
     fig.colorbar(hb, ax=ax, label="log10(count)")
-    return _save(fig, fig_dir, "02_merit_order")
+    return _save(fig, fig_dir, "01_merit_order")
 
 
-# --- 3. forecast vs actual for the most volatile week -----------------------
-
-def fig_forecast_week(proc: Path, fig_dir: Path) -> Path:
-    p = pd.read_parquet(proc / "preds_model.parquet").sort_index()
-    peak_ts = p["actual"].idxmax()
-    half = pd.Timedelta(days=3, hours=12)
-    w = p.loc[peak_ts - half : peak_ts + half]
-    fig, ax = plt.subplots(figsize=(9, 3.8))
-    ax.fill_between(w.index, w["q05"], w["q95"], color=C_BAND, alpha=0.18,
-                    label="90% interval (q05-q95)")
-    ax.plot(w.index, w["actual"], color="#222", lw=1.3, label="actual")
-    ax.plot(w.index, w["q50"], color=C_LGBM, lw=1.3, ls="--", label="forecast (median)")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
-    ax.set_ylabel("EUR/MWh")
-    ax.set_title(f"Forecast vs actual, most volatile week ({w.index[0]:%Y-%m-%d})")
-    ax.legend(loc="upper left", fontsize=8, ncol=3)
-    return _save(fig, fig_dir, "03_forecast_week")
-
-
-# --- 4. model comparison ----------------------------------------------------
+# --- 02. model comparison ---------------------------------------------------
 
 def fig_model_comparison(proc: Path, fig_dir: Path) -> Path:
     b = pd.read_parquet(proc / "preds_baselines.parquet")
@@ -143,82 +105,10 @@ def fig_model_comparison(proc: Path, fig_dir: Path) -> Path:
     ax.set_ylabel("EUR/MWh")
     ax.set_title("Forecast accuracy: LightGBM vs baselines (out-of-sample)")
     ax.legend(fontsize=8)
-    return _save(fig, fig_dir, "04_model_comparison")
+    return _save(fig, fig_dir, "02_model_comparison")
 
 
-# --- 5. cumulative skill (visualises the DM result + its stability) ---------
-
-def fig_cumulative_skill(proc: Path, fig_dir: Path) -> Path:
-    b = pd.read_parquet(proc / "preds_baselines.parquet")
-    m = pd.read_parquet(proc / "preds_model.parquet").reindex(b.index)
-    a = b["actual"]
-    cum_naive = (_abs_err(a, b["seasonal_naive"]) - _abs_err(a, m["q50"])).cumsum()
-    cum_ridge = (_abs_err(a, b["ridge"]) - _abs_err(a, m["q50"])).cumsum()
-    fig, ax = plt.subplots(figsize=(9, 3.6))
-    ax.plot(cum_naive.index, cum_naive.values, color=C_NAIVE, label="vs seasonal-naive")
-    ax.plot(cum_ridge.index, cum_ridge.values, color=C_RIDGE, label="vs Ridge")
-    ax.axhline(0, color="k", lw=0.6)
-    ax.set_ylabel("cumulative |error| saved (EUR/MWh)")
-    ax.set_title("Cumulative accuracy gain of LightGBM (steady rise = stable, real edge)")
-    ax.legend(loc="upper left", fontsize=8)
-    return _save(fig, fig_dir, "05_cumulative_skill")
-
-
-# --- 6. error distribution --------------------------------------------------
-
-def fig_error_distribution(proc: Path, fig_dir: Path) -> Path:
-    b = pd.read_parquet(proc / "preds_baselines.parquet")
-    m = pd.read_parquet(proc / "preds_model.parquet").reindex(b.index)
-    a = b["actual"]
-    e_lgbm = (a - m["q50"]).dropna()
-    e_ridge = (a - b["ridge"]).dropna()
-    lim = np.nanpercentile(np.abs(e_ridge), 99)
-    bins = np.linspace(-lim, lim, 80)
-    fig, ax = plt.subplots(figsize=(6.6, 4.0))
-    ax.hist(e_ridge, bins=bins, color=C_RIDGE, alpha=0.5,
-            label=f"Ridge (sd {e_ridge.std():.1f})")
-    ax.hist(e_lgbm, bins=bins, color=C_LGBM, alpha=0.5,
-            label=f"LightGBM (sd {e_lgbm.std():.1f})")
-    ax.axvline(0, color="k", lw=0.8)
-    ax.axvline(e_lgbm.mean(), color=C_LGBM, ls="--", lw=1,
-               label=f"LGBM mean {e_lgbm.mean():+.2f}")
-    ax.set_xlabel("forecast error = actual - forecast (EUR/MWh)")
-    ax.set_ylabel("count")
-    ax.set_title("Error distribution: LightGBM is tighter and near-unbiased")
-    ax.legend(fontsize=8)
-    return _save(fig, fig_dir, "06_error_distribution")
-
-
-# --- 7. MAE by hour ---------------------------------------------------------
-
-def fig_mae_by_hour(proc: Path, fig_dir: Path) -> Path:
-    s = pd.read_parquet(proc / "mae_by_hour.parquet").iloc[:, 0]
-    worst = set(s.sort_values(ascending=False).head(3).index)
-    colors = [C_LGBM if h in worst else C_RIDGE for h in s.index]
-    fig, ax = plt.subplots(figsize=(8, 3.4))
-    ax.bar(s.index, s.values, color=colors)
-    ax.set_xlabel("hour of day (local)")
-    ax.set_ylabel("MAE (EUR/MWh)")
-    ax.set_title("Where the model struggles by hour (red = worst, evening peak)")
-    ax.set_xticks(range(0, 24, 2))
-    return _save(fig, fig_dir, "07_mae_by_hour")
-
-
-# --- 8. MAE by regime -------------------------------------------------------
-
-def fig_mae_by_regime(proc: Path, fig_dir: Path) -> Path:
-    t = pd.read_parquet(proc / "mae_by_regime.parquet")
-    fig, ax = plt.subplots(figsize=(6.0, 3.8))
-    bars = ax.bar(t.index, t["mae"], color=[C_ACC, C_RIDGE, C_LGBM][: len(t)])
-    for bar, (_, row) in zip(bars, t.iterrows(), strict=True):
-        ax.text(bar.get_x() + bar.get_width() / 2, row["mae"] + 0.5,
-                f"{row['mae']:.1f}\nn={int(row['n']):,}", ha="center", fontsize=8)
-    ax.set_ylabel("MAE (EUR/MWh)")
-    ax.set_title("Accuracy by price regime (spikes are intrinsically hard)")
-    return _save(fig, fig_dir, "08_mae_by_regime")
-
-
-# --- 9. interval coverage calibration ---------------------------------------
+# --- 03. interval coverage calibration --------------------------------------
 
 def fig_coverage(proc: Path, fig_dir: Path) -> Path:
     m = pd.read_parquet(proc / "preds_model.parquet")
@@ -242,21 +132,10 @@ def fig_coverage(proc: Path, fig_dir: Path) -> Path:
     axes[1].set_ylabel("mean interval width (EUR/MWh)")
     axes[1].set_title("Cost of calibration: wider but honest")
     fig.suptitle("Conformal calibration restores coverage to ~nominal", y=1.02)
-    return _save(fig, fig_dir, "09_coverage_calibration")
+    return _save(fig, fig_dir, "03_coverage_calibration")
 
 
-# --- 10. SHAP importance ----------------------------------------------------
-
-def fig_shap(proc: Path, fig_dir: Path) -> Path:
-    s = pd.read_parquet(proc / "shap_importance.parquet").iloc[:, 0].sort_values().tail(12)
-    fig, ax = plt.subplots(figsize=(6.6, 4.6))
-    ax.barh(s.index, s.values, color=C_RIDGE)
-    ax.set_xlabel("mean |SHAP| (EUR/MWh contribution)")
-    ax.set_title("What the model relies on (SHAP global importance)")
-    return _save(fig, fig_dir, "10_shap_importance")
-
-
-# --- 11. ablation -----------------------------------------------------------
+# --- 04. ablation -----------------------------------------------------------
 
 def fig_ablation(proc: Path, fig_dir: Path) -> Path:
     s = pd.read_parquet(proc / "ablation.parquet").iloc[:, 0]
@@ -272,53 +151,10 @@ def fig_ablation(proc: Path, fig_dir: Path) -> Path:
     ax.set_xticklabels(s.index, rotation=10)
     ax.set_ylabel("MAE (EUR/MWh)")
     ax.set_title("Feature ablation: skill comes from the fundamentals forecasts")
-    return _save(fig, fig_dir, "11_ablation")
+    return _save(fig, fig_dir, "04_ablation")
 
 
-# --- 12. feature correlation (explains SHAP-vs-ablation divergence) ----------
-
-def fig_feature_correlation(proc: Path, fig_dir: Path) -> Path:
-    X = pd.read_parquet(proc / "features_X.parquet")
-    keys = [
-        "residual_load_fc", "fc_load_total", "fc_gen_wind_pv", "fc_gen_total",
-        "fc_gen_pv", "price_lag_24h", "price_lag_168h", "price_roll7_mean",
-    ]
-    keys = [k for k in keys if k in X.columns]
-    corr = X[keys].corr()
-    fig, ax = plt.subplots(figsize=(6.6, 5.6))
-    im = ax.imshow(corr.values, cmap="RdBu_r", vmin=-1, vmax=1)
-    ax.set_xticks(range(len(keys)))
-    ax.set_xticklabels(keys, rotation=45, ha="right", fontsize=8)
-    ax.set_yticks(range(len(keys)))
-    ax.set_yticklabels(keys, fontsize=8)
-    for i in range(len(keys)):
-        for j in range(len(keys)):
-            ax.text(j, i, f"{corr.values[i, j]:.2f}", ha="center", va="center",
-                    fontsize=7, color="black")
-    ax.set_title("Feature collinearity: why SHAP and ablation legitimately differ")
-    fig.colorbar(im, ax=ax, fraction=0.046, label="correlation")
-    return _save(fig, fig_dir, "12_feature_correlation")
-
-
-# --- 13. trading equity curves ----------------------------------------------
-
-def fig_trading_equity(proc: Path, fig_dir: Path) -> Path:
-    con = pd.read_parquet(proc / "trade_backtest_consensus.parquet").sort_index()
-    fig, ax = plt.subplots(figsize=(9, 3.6))
-    ax.plot(con.index, con["pnl"].cumsum(), color=C_RIDGE, label="consensus signal")
-    cf_path = proc / "trade_backtest_consensus_confident.parquet"
-    if cf_path.exists():
-        cf = pd.read_parquet(cf_path).sort_index()
-        ax.plot(cf.index, cf["pnl"].cumsum(), color=C_ACC,
-                label="consensus + confidence filter")
-    ax.axhline(0, color="k", lw=0.6)
-    ax.set_ylabel("cumulative P&L (EUR/MWh, notional)")
-    ax.set_title("Trading signal equity curve (mechanism demo, not deployable alpha)")
-    ax.legend(loc="upper left", fontsize=8)
-    return _save(fig, fig_dir, "13_trading_equity")
-
-
-# --- 14. SIMULATION: permutation null for the hit rate ----------------------
+# --- 05. SIMULATION: permutation null for the trading hit rate --------------
 
 def fig_trading_significance(proc: Path, fig_dir: Path, n_iter: int = 20000) -> Path:
     con = pd.read_parquet(proc / "trade_backtest_consensus.parquet")
@@ -331,86 +167,22 @@ def fig_trading_significance(proc: Path, fig_dir: Path, n_iter: int = 20000) -> 
     null_hits = ((signs * settle) > 0).mean(axis=1)
     p_val = float((null_hits >= obs).mean())
     fig, ax = plt.subplots(figsize=(6.8, 3.8))
-    ax.hist(null_hits * 100, bins=40, color=C_NAIVE, alpha=0.8,
-            label="random-direction null")
+    ax.hist(null_hits * 100, bins=40, color=C_NAIVE, alpha=0.8, label="random-direction null")
     ax.axvline(obs * 100, color=C_LGBM, lw=2, label=f"observed {obs:.1%}")
     ax.axvline(50, color="k", ls="--", lw=1)
     ax.set_xlabel("hit rate (%)")
     ax.set_ylabel("frequency")
     ax.set_title(f"Is the edge real? Permutation test, p = {p_val:.4f} ({n} trades)")
     ax.legend(fontsize=8)
-    return _save(fig, fig_dir, "14_trading_significance")
-
-
-# --- 15. SIMULATION: transaction-cost sensitivity ---------------------------
-
-def fig_cost_sensitivity(proc: Path, fig_dir: Path) -> Path:
-    con = pd.read_parquet(proc / "trade_backtest_consensus.parquet")
-    pos = con["position"].to_numpy()
-    settle = con["settle"].to_numpy()
-    traded = pos != 0
-    n_tr = int(traded.sum())
-    gross = pos * settle
-    costs = np.linspace(0, 5, 51)
-    avg_per_trade = [(gross[traded].sum() - c * n_tr) / n_tr for c in costs]
-    breakeven = gross[traded].sum() / n_tr
-    fig, ax = plt.subplots(figsize=(6.8, 3.8))
-    ax.plot(costs, avg_per_trade, color=C_RIDGE, lw=2)
-    ax.axhline(0, color="k", lw=0.6)
-    ax.axvline(0.5, color=C_ACC, ls="--", lw=1, label="assumed cost (0.50)")
-    ax.axvline(breakeven, color=C_LGBM, ls="--", lw=1, label=f"break-even ({breakeven:.2f})")
-    ax.set_xlabel("transaction cost (EUR/MWh)")
-    ax.set_ylabel("avg P&L per trade (EUR/MWh)")
-    ax.set_title("Cost sensitivity: the edge is not a low-cost artifact")
-    ax.legend(fontsize=8)
-    return _save(fig, fig_dir, "15_cost_sensitivity")
-
-
-# --- 16. EVOLUTION: walk-forward animation (GIF for the README) -------------
-
-def fig_walkforward_evolution(proc: Path, fig_dir: Path, step_days: int = 30) -> Path:
-    price = pd.read_parquet(proc / "target_y.parquet")["price_da"].sort_index()
-    m = pd.read_parquet(proc / "preds_model.parquet").sort_index()
-    actual_d = price.resample("D").mean()
-    fc_d = m["q50"].resample("D").mean()
-    start, end = actual_d.index.min(), fc_d.index.max()
-    cutoffs = pd.date_range(fc_d.index.min(), end, freq=f"{step_days}D")
-    ylo, yhi = float(actual_d.min()), float(actual_d.max())
-    fig, ax = plt.subplots(figsize=(9, 3.8))
-
-    def draw(i: int) -> None:
-        ax.clear()
-        cut = cutoffs[i]
-        nxt = cut + pd.Timedelta(days=step_days)
-        a = actual_d.loc[:nxt]
-        f = fc_d.loc[:nxt]
-        ax.axvspan(start, cut, color=C_RIDGE, alpha=0.10)
-        ax.plot(a.index, a.values, color="#222", lw=0.8, label="actual (daily mean)")
-        ax.plot(f.index, f.values, color=C_LGBM, lw=1.0, ls="--", label="forecast (revealed)")
-        ax.axvline(cut, color=C_RIDGE, lw=1.2)
-        ax.text(cut, yhi, "  train | predict ->", color=C_RIDGE, fontsize=8, va="top")
-        ax.set_xlim(start, end)
-        ax.set_ylim(ylo - 5, yhi + 5)
-        ax.set_ylabel("EUR/MWh")
-        ax.grid(alpha=0.25)
-        ax.set_title(f"Walk-forward: expanding window, no look-ahead "
-                     f"(fold {i + 1}/{len(cutoffs)})")
-        ax.legend(loc="upper left", fontsize=8)
-
-    anim = manim.FuncAnimation(fig, draw, frames=len(cutoffs), interval=250)
-    fig_dir.mkdir(parents=True, exist_ok=True)
-    path = fig_dir / "16_walkforward_evolution.gif"
-    anim.save(path, writer=manim.PillowWriter(fps=4))
-    plt.close(fig)
-    return path
+    return _save(fig, fig_dir, "05_trading_significance")
 
 
 _FIGURES = [
-    fig_price_overview, fig_merit_order, fig_forecast_week, fig_model_comparison,
-    fig_cumulative_skill, fig_error_distribution, fig_mae_by_hour, fig_mae_by_regime,
-    fig_coverage, fig_shap, fig_ablation, fig_feature_correlation,
-    fig_trading_equity, fig_trading_significance, fig_cost_sensitivity,
-    fig_walkforward_evolution,
+    fig_merit_order,
+    fig_model_comparison,
+    fig_coverage,
+    fig_ablation,
+    fig_trading_significance,
 ]
 
 
