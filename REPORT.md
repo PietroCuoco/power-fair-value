@@ -6,14 +6,12 @@
 
 Build a daily fair-value view for German (DE/LU) day-ahead (DA) power, validate it, and translate it into a tradable prompt-curve view — with one programmatic LLM component. The emphasis throughout is on leakage-safe validation and claims that are measurabe rather than flattering.
 
-## Data and quality assurance
+## Data Ingestion & QA
 
 Twelve hourly SMARD series (Bundesnetzagentur, CC BY 4.0) spanning Jan 2023 – May 2026 (29,857 rows): the DA price, actual load and wind/solar generation, and their published day-ahead forecasts. QA confirmed zero missing hours after
-DST-aware alignment (4 spring-forward and 3 fall-back days handled), a negative price share of 5.2% with a floor at −500 EUR/MWh (the EPEX limit — a sign the
-data is genuine), and 109 price spikes, all preserved rather than winsorised. The residual-load forecast is constructed as load-forecast minus wind-and-solar
-forecast, after a candidate raw series was rejected on a magnitude check.
+DST-aware alignment (4 spring-forward and 3 fall-back days handled), a negative price share of 5.2% with a floor at −500 EUR/MWh (the EPEX limit — a sign the data is genuine), and 109 price spikes, all preserved rather than winsorised. The residual-load forecast is constructed as load-forecast minus wind-and-solar forecast, after a candidate raw series was rejected on a magnitude check.
 
-## Forecasting
+## Forecasting & Validation
 
 Features are fundamentals forecasts (residual load, wind/solar, load), price autoregressors (24h/48h/168h lags, 7-day rolling stats), and calendar terms.
 A **leakage guard** attaches an information timestamp to every feature and asserts that nothing known only after the D-1 12:00 Berlin gate enters the model
@@ -50,7 +48,7 @@ evening peak.
 
 ![Fig 4. Feature ablation](reports/figures/04_ablation.png)
 
-## From forecast to a prompt-curve view
+## Prompt Curve Translation
 
 The hourly fair value is aggregated to a daily baseload view and compared to a forward price. With no free forward-curve feed available, the forward enters as
 a **swappable input**; we proxy it two ways. Against a *backward-looking* anchor (trailing realised baseload) the signal posts a 95% hit rate — reported only as
@@ -66,7 +64,7 @@ only on narrow-interval days roughly **doubles the risk-adjusted information rat
 This is a **mechanism demonstration, not deployable alpha**. A real P&L requires a licensed forward series — the code accepts one as a drop-in — and against a
 truly efficient market the edge would be smaller still. The model's primary value is accurate fair-value estimation with calibrated uncertainty.
 
-## LLM component
+## AI-LLM integration
 
 A provider-agnostic, schema-constrained LLM (Gemini by default) converts free-text outage/news into validated structured supply-disruption records (asset, fuel, capacity, window, price direction, confidence). On a synthetic sample it extracted five events from six items and correctly emitted nothing for a "no change" non-event — i.e. it does not hallucinate a record per line. Every
 call is logged; the stage degrades gracefully with no API key, and tests use a mocked client so the suite passes offline. It is presented as a capability —
