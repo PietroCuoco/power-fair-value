@@ -3,22 +3,26 @@ pandas>=2.0
 numpy>=1.24
 scipy>=1.10
 pyarrow>=14.0          # parquet engine (used implicitly by pandas, not imported by name)
-
+ 
 # Modelling
 scikit-learn>=1.3
 lightgbm>=4.0
 shap>=0.44
-
+ 
 # Feature engineering / IO
 holidays>=0.40
 requests>=2.31
 PyYAML>=6.0
 python-dotenv>=1.0
-
+ 
 # Figures
 matplotlib>=3.7
-
+ 
 # LLM component
 pydantic>=2.0
 google-genai>=1.0
 # groq>=0.11           # optional: only needed if llm.provider is set to "groq"
+ 
+# Dev / CI tooling (used by `make lint`, `make test`, and the CI workflow)
+ruff>=0.5
+pytest>=8.0
