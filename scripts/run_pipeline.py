@@ -43,8 +43,10 @@ def _stage_qa(cfg: dict) -> None:
     clean, report = qa.run_qa(df, cfg)
     out_dir = Path(cfg["data"]["processed_dir"])
     clean.to_parquet(out_dir / "dataset_clean.parquet")
-    qa.write_reports(report, out_dir)
-    print(f"[qa] clean dataset + qa_report written to {out_dir}")
+    reports_dir = out_dir.parents[1] / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    qa.write_reports(report, reports_dir)
+    print(f"[qa] clean dataset -> {out_dir}; qa_report -> {reports_dir}")
 
 
 def _stage_features(cfg: dict) -> None:
@@ -331,21 +333,21 @@ def _stage_submission(cfg: dict) -> None:
     m = pd.read_parquet(mp).sort_index()
     sub = pd.DataFrame(
         {
-            "datetime_utc": m.index.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "forecast_eur_per_mwh": m["q50"].round(2).to_numpy(),
+            "id": m.index.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "y_pred": m["q50"].round(2).to_numpy(),
         }
     )
     cp = out_dir / "preds_conformal.parquet"
     if cp.exists():  # prefer the calibrated 90% interval
         c = pd.read_parquet(cp).reindex(m.index)
-        sub["lower_90_eur_per_mwh"] = c["q_lo"].round(2).to_numpy()
-        sub["upper_90_eur_per_mwh"] = c["q_hi"].round(2).to_numpy()
+        sub["y_pred_lower_90"] = c["q_lo"].round(2).to_numpy()
+        sub["y_pred_upper_90"] = c["q_hi"].round(2).to_numpy()
     else:
-        sub["lower_90_eur_per_mwh"] = m["q05"].round(2).to_numpy()
-        sub["upper_90_eur_per_mwh"] = m["q95"].round(2).to_numpy()
+        sub["y_pred_lower_90"] = m["q05"].round(2).to_numpy()
+        sub["y_pred_upper_90"] = m["q95"].round(2).to_numpy()
     dest = out_dir.parents[1] / "submission.csv"
     sub.to_csv(dest, index=False)
-    print(f"[submission] wrote {len(sub):,} hourly forecasts to {dest}")
+    print(f"[submission] wrote {len(sub):,} hourly forecasts (id, y_pred + 90% interval) to {dest}")
 
 
 def _stage_figures(cfg: dict) -> None:

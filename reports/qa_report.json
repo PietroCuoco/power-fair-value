@@ -1,0 +1,81 @@
+{
+  "index": {
+    "n_rows": 29857,
+    "is_monotonic": true,
+    "n_duplicate_timestamps": 0,
+    "expected_hours": 29857,
+    "n_missing_hours": 0
+  },
+  "dst": {
+    "n_short_days_23h": 4,
+    "n_long_days_25h": 3,
+    "short_days_sample": [
+      "2023-03-26",
+      "2024-03-31",
+      "2025-03-30",
+      "2026-03-29"
+    ],
+    "long_days_sample": [
+      "2023-10-29",
+      "2024-10-27",
+      "2025-10-26"
+    ]
+  },
+  "ranges": {
+    "negative_value_violations": {
+      "residual_load_actual": 466
+    }
+  },
+  "residual_consistency": {
+    "checked": true,
+    "median_abs_diff_mw": 0.0,
+    "p95_abs_diff_mw": 0.0
+  },
+  "negative_prices": {
+    "n_negative": 1562,
+    "pct_negative": 5.232,
+    "min_price": -500.0
+  },
+  "spikes": {
+    "threshold": 6.0,
+    "n_spikes": 109,
+    "top_spike_values": [
+      936.28,
+      820.11,
+      818.98,
+      805.08,
+      674.18
+    ]
+  },
+  "gap_fill": {
+    "max_gap_hours": 3,
+    "values_filled_per_col": {
+      "price_da": 0,
+      "load_actual": 0,
+      "residual_load_actual": 0,
+      "gen_wind_onshore_actual": 0,
+      "gen_wind_offshore_actual": 0,
+      "gen_pv_actual": 0,
+      "fc_gen_total": 0,
+      "fc_gen_wind_pv": 0,
+      "fc_gen_wind_onshore": 0,
+      "fc_gen_wind_offshore": 0,
+      "fc_gen_pv": 0,
+      "fc_load_total": 0
+    }
+  },
+  "remaining_nans_per_col": {
+    "price_da": 0,
+    "load_actual": 0,
+    "residual_load_actual": 0,
+    "gen_wind_onshore_actual": 0,
+    "gen_wind_offshore_actual": 0,
+    "gen_pv_actual": 0,
+    "fc_gen_total": 0,
+    "fc_gen_wind_pv": 0,
+    "fc_gen_wind_onshore": 0,
+    "fc_gen_wind_offshore": 0,
+    "fc_gen_pv": 0,
+    "fc_load_total": 0
+  }
+}
