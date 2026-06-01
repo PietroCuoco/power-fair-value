@@ -8,7 +8,7 @@ data:
   source_primary: smard
   source_secondary: entsoe   # cross-check QA if token available
   start_date: "2023-01-01"
-  end_date: "auto"           # auto = latest available
+  end_date: "2026-05-24"           # auto = latest available
   raw_dir: data/raw
   processed_dir: data/processed
 
